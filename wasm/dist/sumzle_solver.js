@@ -109,7 +109,7 @@ export class SumzleSolver {
         const ptr0 = passStringToWasm0(expr, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
         const ret = wasm.sumzlesolver_evaluate_expression(this.__wbg_ptr, ptr0, len0);
-        return ret === 0x100000001 ? undefined : ret;
+        return ret[0] === 0 ? undefined : ret[1];
     }
     /**
      * @param {string} expression

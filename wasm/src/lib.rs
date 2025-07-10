@@ -74,7 +74,7 @@ impl SumzleSolver {
         }
     }
 
-    pub fn evaluate_expression(&self, expr: &str) -> Option<i32> {
+    pub fn evaluate_expression(&self, expr: &str) -> Option<f64> {
         if expr.is_empty() {
             return None;
         }
@@ -122,15 +122,15 @@ impl SumzleSolver {
 
                     // Evaluate the inner expression
                     let inner_value = if is_simple_number {
-                        inner_expr.parse::<i32>().ok()
+                        inner_expr.parse::<f64>().ok()
                     } else {
                         // It's a division expression
                         let parts: Vec<&str> = inner_expr.split('/').collect();
-                        if let (Ok(num), Ok(denom)) = (parts[0].parse::<i32>(), parts[1].parse::<i32>()) {
-                            if denom == 0 {
+                        if let (Ok(num), Ok(denom)) = (parts[0].parse::<f64>(), parts[1].parse::<f64>()) {
+                            if denom == 0.0 {
                                 return None; // Division by zero
                             }
-                            Some((num as f64 / denom as f64).floor() as i32)
+                            Some((num / denom).floor())
                         } else {
                             return None; // Parse error
                         }
@@ -172,7 +172,7 @@ impl SumzleSolver {
                     return None; // Too large or negative
                 }
 
-                let mut factorial = 1;
+                let mut factorial = 1i32;
                 for i in 2..=n {
                     factorial *= i;
                 }
@@ -209,7 +209,7 @@ impl SumzleSolver {
                     return None; // Invalid values
                 }
 
-                let mut result = 1;
+                let mut result = 1i32;
                 for i in 0..n {
                     result *= (m - i);
                 }
@@ -227,7 +227,7 @@ impl SumzleSolver {
         self.evaluate_simple_expression(&processed_expr)
     }
 
-    fn evaluate_simple_expression(&self, expr: &str) -> Option<i32> {
+    fn evaluate_simple_expression(&self, expr: &str) -> Option<f64> {
         // Check for invalid patterns
         if expr.contains("NaN") {
             return None;
@@ -247,10 +247,9 @@ impl SumzleSolver {
         match eval_str(expr) {
             Ok(result) => {
                 // Check if the result is an integer
-                if result.fract() == 0.0 && result >= i32::MIN as f64 && result <= i32::MAX as f64 {
-                    Some(result as i32)
+                if result.fract() == 0.0 {
+                    Some(result)
                 } else {
-                    // If the result is not an integer or is out of range, return None
                     None
                 }
             },
