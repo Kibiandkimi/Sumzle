@@ -431,7 +431,12 @@
                 <textarea id="importGameStateInput" class="import-input" rows="2" placeholder="粘贴从 Sumzle 游戏复制的局面码..."></textarea>
                 <button class="btn btn-secondary import-btn" id="importGameStateBtn">📥 导入局面</button>
             </div>
-
+            <div class="input-group import-group">
+                <label class="input-label" for="importSearchStateBtn">导入/导出搜索状态</label>
+                <p class="help-text" style="font-size: 0.8rem; margin-top: -5px; margin-bottom: 10px;">用于分多次地进行大型搜索。</p>
+                <input type="file" id="searchStateFileInput" accept=".json,application/json" style="display: none;">
+                <button class="btn btn-secondary import-btn" id="importSearchStateBtn">📥 导入状态文件</button>
+            </div>
             <div class="optimization-info">
                 <strong>🚀 优化特性:</strong> 智能剪枝 • 等号左边操作数≤30 • 支持阶乘 • 优先级搜索 • 修复等号右边限制 • 多行约束 • 约束预处理 • `[]`内仅`a/b`
             </div>
@@ -464,6 +469,7 @@
                 <button class="btn btn-secondary" id="clearBtn">🧹 清空</button>
                 <button class="btn btn-secondary" id="addGuessRowBtn">➕ 添加猜测行</button>
                 <button class="btn btn-danger" id="stopBtn" style="display: none;">⏹️ 停止</button>
+                <button class="btn btn-secondary" id="exportSearchStateBtn" style="display: none;">📤 导出状态</button>
             </div>
 
             <div class="progress-container" id="progressContainer">
@@ -546,6 +552,8 @@
                 this.validChars = "0123456789+-*/%^=()![]>A";
                 this.displayCharsMap = { '*': '×', '/': '÷' };
                 this.actualCharsMap = { '×': '*', '÷': '/' };
+                this.resumeState = null; // 用于恢复搜索
+                this.exportableState = null;
                 
                 this.maxOperandValue = 30; 
                 this.searchPruningEnabled = true; 
@@ -599,7 +607,13 @@
                     this.addGuessRow();
                 });
                  document.getElementById('importGameStateBtn').addEventListener('click', () => this.importGameState());
-
+                document.getElementById('exportSearchStateBtn').addEventListener('click', () => this.exportSearchState());
+                // This button now triggers the hidden file input
+                document.getElementById('importSearchStateBtn').addEventListener('click', () => {
+                    document.getElementById('searchStateFileInput').click();
+                });
+                // The file input itself handles the import logic when a file is selected
+                document.getElementById('searchStateFileInput').addEventListener('change', (event) => this.handleFileImport(event));
 
                 this.createKeyboard();
 
@@ -963,17 +977,27 @@
                 this.hideContextMenu();
                 if (this.isRunning) return;
                 
-                if (!this.preprocessConstraints()) {
-                    return;
-                }
+                    if (!this.preprocessConstraints()) {
+                        return;
+                    }
+                
 
                 this.isRunning = true;
                 this.shouldStop = false;
-                this.results = [];
-                this.searchedCount = 0;
-                this.startTime = Date.now();
+                this.exportableState = null; // 清除任何先前的可导出状态
+
+                // 如果不是恢复，则重置统计信息。如果恢复，则统计信息已加载。
+                if (!this.resumeState) {
+                    this.results = [];
+                    this.searchedCount = 0;
+                    this.startTime = Date.now();
+                    this.charProbabilitiesData = [];
+                } else {
+                    // 恢复时，还原开始时间以正确计算总耗时。
+                    this.startTime = Date.now() - (this.resumeState.stats.elapsedTime * 1000);
+                }
+                
                 this.lastUIUpdate = Date.now();
-                this.charProbabilitiesData = [];
                 
                 document.getElementById('solveBtn').classList.add('loading');
                 document.getElementById('solveBtn').disabled = true;
@@ -981,6 +1005,7 @@
                 document.getElementById('clearBtn').disabled = true;
                 document.getElementById('addGuessRowBtn').classList.add('loading');
                 document.getElementById('addGuessRowBtn').disabled = true;
+                document.getElementById('exportSearchStateBtn').style.display = 'none';
 
 
                 document.getElementById('solveBtn').style.display = 'none';
@@ -995,7 +1020,10 @@
 
                 
                 try {
-                    await this.optimizedBruteForceSearch();
+                    // 传入恢复状态，然后清除它，以免被意外再次使用
+                    const stateToResume = this.resumeState;
+                    this.resumeState = null;
+                    await this.optimizedBruteForceSearch(stateToResume);
                 } catch (error) {
                     this.showError('求解过程中出现错误: ' + error.message);
                 } finally {
@@ -1008,8 +1036,14 @@
                     document.getElementById('addGuessRowBtn').disabled = false;
 
 
-                    document.getElementById('solveBtn').style.display = 'block';
                     document.getElementById('stopBtn').style.display = 'none';
+                    
+                    // 如果是用户停止了进程，则显示导出按钮
+                    if (this.shouldStop && this.exportableState) {
+                        document.getElementById('exportSearchStateBtn').style.display = 'block';
+                    } else {
+                        document.getElementById('solveBtn').style.display = 'block';
+                    }
                     
                     this.updateStats();
                     this.calculateAndDisplayProbabilities(); 
@@ -1018,11 +1052,16 @@
                          document.getElementById('progressText').textContent = `已停止 - 搜索: ${this.searchedCount.toLocaleString()} - 找到: ${this.results.length}`;
                     } else {
                          document.getElementById('progressText').textContent = `完成 - 搜索: ${this.searchedCount.toLocaleString()} - 找到: ${this.results.length}`;
+                         document.getElementById('progressFill').style.width = '100%';
                     }
                      if (this.results.length === 0 && !this.shouldStop) {
                         document.getElementById('progressContainer').style.display = 'none';
                     }
                 }
+            }
+
+            stop() {
+                this.shouldStop = true;
             }
             
             isDigit(c) { return c && c >= '0' && c <= '9'; }
@@ -1336,14 +1375,219 @@
                     !gk.cannotBeAt[index].has(c)
                 );
             }
+            prepareExportState(topLevelChars, currentIndex) {
+                const elapsedTime = (Date.now() - this.startTime) / 1000;
+                this.exportableState = {
+                    version: "1.0",
+                    length: this.length,
+                    rows: this.guessRowsData,
+                    results: this.results,
+                    stats: {
+                        searchedCount: this.searchedCount,
+                        elapsedTime: elapsedTime
+                    },
+                    progress: {
+                        topLevelChars: topLevelChars,
+                        resumeIndex: currentIndex // 从这个索引恢复
+                    }
+                };
+            }
 
+            exportSearchState() {
+                if (!this.exportableState) {
+                    this.showError("没有可导出的暂停状态。请先运行并停止一个搜索。");
+                    return;
+                }
+                
+                try {
+                    this.showError("正在生成状态文件...");
+                    const stateString = JSON.stringify(this.exportableState);
+                    const blob = new Blob([stateString], { type: 'application/json' });
+                    
+                    const a = document.createElement('a');
+                    const url = URL.createObjectURL(blob);
+                    a.href = url;
+                    
+                    const timestamp = new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '');
+                    a.download = `sumzle_solver_state_${timestamp}.json`;
+                    
+                    document.body.appendChild(a);
+                    a.click();
+                    
+                    setTimeout(() => {
+                        document.body.removeChild(a);
+                        URL.revokeObjectURL(url);
+                        this.showError("状态文件已导出。");
+                    }, 0);
 
-            async optimizedBruteForceSearch() {
+                } catch (err) {
+                    this.showError("导出失败: " + err.message);
+                }
+            }
+handleFileImport(event) {
+                const fileInput = event.target;
+                const file = fileInput.files[0];
+                if (!file) {
+                    return; // No file selected
+                }
+
+                this.showError("正在读取状态文件...");
+                const reader = new FileReader();
+
+                reader.onload = (e) => {
+                    try {
+                        const stateString = e.target.result;
+                        const state = JSON.parse(stateString);
+                        
+                        if (state.version !== "1.0" || !state.progress || !state.rows) {
+                            throw new Error("状态文件无效或版本不兼容。");
+                        }
+                        
+                        this.clear();
+
+                        setTimeout(() => {
+                            // Restore state from file
+                            this.length = state.length;
+                            this.guessRowsData = state.rows;
+                            this.results = state.results;
+                            this.searchedCount = state.stats.searchedCount;
+                            this.resumeState = state; // Store full state for the solve method
+
+                            // Update UI
+                            document.getElementById('lengthInput').value = this.length;
+                            this.updateConstraintBoard();
+                            this.updateResultsWithRecommendation();
+                            
+                            const elapsed = state.stats.elapsedTime;
+                            const speed = elapsed > 0 ? Math.round(this.searchedCount / elapsed) : 0;
+                            document.getElementById('foundCount').textContent = this.results.length.toLocaleString();
+                            document.getElementById('searchedCount').textContent = this.searchedCount.toLocaleString();
+                            document.getElementById('timeElapsed').textContent = elapsed.toFixed(1) + 's';
+                            document.getElementById('searchSpeed').textContent = speed.toLocaleString();
+                            this.calculateAndDisplayProbabilities();
+
+                            this.showError("状态导入成功！点击 '开始求解' 以继续。");
+                            document.getElementById('exportSearchStateBtn').style.display = 'none';
+                        }, 100);
+
+                    } catch (err) {
+                        this.showError("导入失败: " + err.message);
+                        this.resumeState = null;
+                    } finally {
+                        // Reset file input to allow importing the same file again
+                        fileInput.value = null;
+                    }
+                };
+
+                reader.onerror = () => {
+                    this.showError("读取文件时出错。");
+                    fileInput.value = null;
+                };
+
+                reader.readAsText(file);
+            }
+
+            importSearchState() {
+                const textarea = document.getElementById('searchStateInput');
+                const stateString = textarea.value.trim();
+                if (!stateString) {
+                    this.showError("请粘贴要导入的搜索状态。");
+                    return;
+                }
+                try {
+                    const state = JSON.parse(stateString);
+                    if (state.version !== "1.0" || !state.progress || !state.rows) {
+                        throw new Error("状态码无效或版本不兼容。");
+                    }
+                    
+                    this.clear();
+
+                    setTimeout(() => {
+                        // 恢复状态
+                        this.length = state.length;
+                        this.guessRowsData = state.rows;
+                        this.results = state.results;
+                        this.searchedCount = state.stats.searchedCount;
+                        this.resumeState = state; // 为 solve 方法存储完整状态
+
+                        // 更新UI
+                        document.getElementById('lengthInput').value = this.length;
+                        this.updateConstraintBoard();
+                        this.updateResultsWithRecommendation();
+                        
+                        const elapsed = state.stats.elapsedTime;
+                        const speed = elapsed > 0 ? Math.round(this.searchedCount / elapsed) : 0;
+                        document.getElementById('foundCount').textContent = this.results.length.toLocaleString();
+                        document.getElementById('searchedCount').textContent = this.searchedCount.toLocaleString();
+                        document.getElementById('timeElapsed').textContent = elapsed.toFixed(1) + 's';
+                        document.getElementById('searchSpeed').textContent = speed.toLocaleString();
+                        this.calculateAndDisplayProbabilities();
+
+                        this.showError("状态导入成功！点击 '开始求解' 以继续。");
+                        document.getElementById('exportSearchStateBtn').style.display = 'none';
+                    }, 100);
+
+                } catch (e) {
+                    this.showError("导入失败: " + e.message);
+                    this.resumeState = null;
+                }
+            }
+
+            async optimizedBruteForceSearch(resumeState = null) {
                 this.lastUIUpdate = Date.now();
                 const initialExpression = Array(this.length).fill('');
                 const initialCounts = new Map();
                 const initialFloorContext = { inFloor: false, hasSlashInCurrentFloor: false };
-                await this._optimizedRecursiveSearch(0, initialExpression, null, initialCounts, initialFloorContext);
+                
+                // 确定第一个位置（索引0）的字符集
+                const topLevelChars = resumeState ? resumeState.progress.topLevelChars : this.getOptimizedCharOrder(0, initialExpression, null, initialFloorContext);
+                const totalTopLevelBranches = topLevelChars.length;
+                
+                // 确定起点
+                let startBranchIndex = resumeState ? resumeState.progress.resumeIndex : 0;
+
+                for (let i = startBranchIndex; i < totalTopLevelBranches; i++) {
+                    const charToTry = topLevelChars[i];
+                    
+                    // 检查是否需要停止
+                    if (this.shouldStop) {
+                        this.prepareExportState(topLevelChars, i);
+                        return; // 退出搜索
+                    }
+                    
+                    // 根据顶层循环更新进度
+                    const progressPercentage = ((i + 1) / totalTopLevelBranches) * 100;
+                    this.updateProgress(progressPercentage);
+                    
+                    let nextFloorContext = { ...initialFloorContext };
+                    if (charToTry === '[') nextFloorContext = { inFloor: true, hasSlashInCurrentFloor: false };
+                    else if (charToTry === ']' && initialFloorContext.inFloor) nextFloorContext = { inFloor: false, hasSlashInCurrentFloor: false };
+                    else if (charToTry === '/' && initialFloorContext.inFloor) nextFloorContext = { ...initialFloorContext, hasSlashInCurrentFloor: true };
+
+                    if (this.canPlaceChar(charToTry, 0, initialExpression, null, initialCounts, initialFloorContext)) {
+                        initialExpression[0] = charToTry;
+                        initialCounts.set(charToTry, (initialCounts.get(charToTry) || 0) + 1);
+                        const newMainOp = this.isMainOperator(charToTry) ? charToTry : null;
+
+                        // 从第二个位置（索引1）开始递归
+                        await this._optimizedRecursiveSearch(1, initialExpression, newMainOp, initialCounts, nextFloorContext);
+                        
+                        // 为下一个顶层字符进行回溯
+                        initialCounts.set(charToTry, initialCounts.get(charToTry) - 1);
+                        if(initialCounts.get(charToTry) === 0) initialCounts.delete(charToTry);
+                    }
+                }
+                // 对表达式数组的最终回溯
+                initialExpression[0] = '';
+            }
+            
+            updateProgress(percentage) {
+                const fill = document.getElementById('progressFill');
+                const text = document.getElementById('progressText');
+                
+                const cappedPercentage = Math.min(100, percentage);
+                fill.style.width = `${cappedPercentage}%`;
+                text.textContent = `进度: ${cappedPercentage.toFixed(1)}% - 已搜索: ${this.searchedCount.toLocaleString()} - 找到: ${this.results.length}`;
             }
 
             isValidSolution(expression) {
@@ -1515,13 +1759,7 @@
                 } catch (error) { return null; }
             }
 
-        updateProgress(percentage) {
-            const fill = document.getElementById('progressFill');
-            const text = document.getElementById('progressText');
-            
-            fill.style.width = `${Math.min(100, percentage)}%`;
-            text.textContent = `进度: ${percentage.toFixed(1)}% - 已搜索: ${this.searchedCount.toLocaleString()} - 找到: ${this.results.length}`;
-        }
+        
 
         updateProgressWithSearchedCount() {
             const text = document.getElementById('progressText');
@@ -1676,10 +1914,6 @@
                 `;
             });
             container.innerHTML = html;
-        }
-
-        stop() {
-            this.shouldStop = true;
         }
 
         clear() {

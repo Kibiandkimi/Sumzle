@@ -2359,8 +2359,8 @@ function playSound(soundName) {
                 n = Number(n);
                 if (isNaN(n) || n < 0 || n !== Math.floor(n))
                     throw new Error("Factorial non-neg int");
-                if (n > 10)
-                    throw new Error("Factorial max 10");
+                if (n > 20)
+                    throw new Error("Factorial max 20");
                 if (n === 0 || n === 1)
                     return 1;
                 let result = 1;
@@ -3611,10 +3611,11 @@ function playSound(soundName) {
                 let safeExpr = expr;
                 for (let k = 0; k < 3; k++)
                     safeExpr = safeExpr.replace(/\[(.*?)\]/g, (match,innerExpr)=>`truncate((${innerExpr}))`);
+                
                 for (let i = 0; i < 3; i++) {
                     safeExpr = safeExpr.replace(/(\d+)A(\d+)/g, "permutation($1,$2)");
-                    safeExpr = safeExpr.replace(/(\d+)!/g, "factorial($1)");
-                    safeExpr = safeExpr.replace(/\((.+?)\)!/g, (match,innerExpr)=>`factorial((${innerExpr}))`);
+                    safeExpr = safeExpr.replace(/((\d+(\.\d+)?)|(\(.*\))|(truncate\(.*\))|(permutation\(.*\)))!/g, (match, term) => `factorial(${term})`);
+                    
                     safeExpr = safeExpr.replace(/\((.+?)\)A(\d+)/g, (match,innerExpr,n)=>`permutation((${innerExpr}),${n})`);
                     safeExpr = safeExpr.replace(/(\d+)A\((.+?)\)/g, (match,m,innerExpr)=>`permutation(${m},(${innerExpr}))`);
                     safeExpr = safeExpr.replace(/\((.+?)\)A\((.+?)\)/g, (match,innerM,innerN)=>`permutation((${innerM}),(${innerN}))`);
