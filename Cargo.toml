@@ -1,0 +1,26 @@
+[package]
+name = "sumzle-solver"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+rayon = "1.10"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+crossbeam = "0.8"
+crossbeam-channel = "0.5"
+num_cpus = "1.16"
+clap = { version = "4.5", features = ["derive"] }
+tokio = { version = "1.37", features = ["full"] }
+bincode = "1.3"
+dashmap = "6.0"
+log = "0.4"
+env_logger = "0.11"
+
+[[bin]]
+name = "sumzle-solver"
+path = "src/main.rs"
+
+[[bin]]
+name = "sumzle-worker"
+path = "src/worker_main.rs"
