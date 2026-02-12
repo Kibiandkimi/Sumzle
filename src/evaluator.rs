@@ -50,6 +50,9 @@ fn tokenize(expr: &str) -> Result<Vec<Token>, String> {
                     i += 1;
                 }
                 let num_str: String = chars[start..i].iter().collect();
+                if num_str.len() > 1 && chars[start] == '0' {
+                    return Err(format!("Leading zero is not allowed: {}", num_str));
+                }
                 let num: f64 = num_str.parse().map_err(|e| format!("Parse error: {}", e))?;
                 tokens.push(Token::Number(num));
             }
@@ -72,6 +75,9 @@ fn tokenize(expr: &str) -> Result<Vec<Token>, String> {
                             i += 1;
                         }
                         let num_str: String = chars[start..i].iter().collect();
+                        if num_str.len() > 1 && chars[start] == '0' {
+                            return Err(format!("Leading zero is not allowed: -{}", num_str));
+                        }
                         let num: f64 =
                             num_str.parse().map_err(|e| format!("Parse error: {}", e))?;
                         tokens.push(Token::Number(-num));
@@ -304,7 +310,7 @@ fn permutation(n: f64, r: f64) -> Result<f64, String> {
     let n = n as u64;
     let r = r as u64;
     if r > n {
-        return Ok(0.0);
+        return Err(format!("Invalid permutation: {}A{} (r > n)", n, r));
     }
     if n > 20 {
         return Err(format!("Permutation too large: {}A{}", n, r));
@@ -437,5 +443,18 @@ mod tests {
     fn test_nested_brackets() {
         assert_eq!(evaluate_expression("[7/2]").unwrap(), 3.0);
         assert_eq!(evaluate_expression("[[7/2]/2]").unwrap(), 1.0);
+    }
+
+    #[test]
+    fn test_reject_leading_zero_numbers() {
+        assert!(evaluate_expression("00+1").is_err());
+        assert!(evaluate_expression("-01+2").is_err());
+        assert!(validate_expression("[4A00]=1").is_err());
+    }
+
+    #[test]
+    fn test_reject_invalid_permutation_r_gt_n() {
+        assert!(evaluate_expression("4A99").is_err());
+        assert!(validate_expression("[4A99]=0").is_err());
     }
 }

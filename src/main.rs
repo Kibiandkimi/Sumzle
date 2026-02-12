@@ -5,6 +5,8 @@ use sumzle_solver::input::{interactive_input, parse_json_input};
 use sumzle_solver::parallel::ParallelSolver;
 use sumzle_solver::solver::{generate_prefixes, Solver};
 use sumzle_solver::types::*;
+use std::fs;
+use std::path::PathBuf;
 
 #[derive(Parser)]
 #[command(name = "sumzle-solver")]
@@ -29,13 +31,21 @@ enum Commands {
         /// Solving strategy: rayon, channel, steal
         #[arg(short, long, default_value = "rayon")]
         strategy: String,
+
+        /// Write found solutions to file
+        #[arg(short, long)]
+        output_file: Option<PathBuf>,
     },
 
     /// JSON mode: read puzzle from JSON string
     Json {
         /// JSON input string
-        #[arg(short, long)]
-        input: String,
+        #[arg(short, long, conflicts_with = "input_file")]
+        input: Option<String>,
+
+        /// JSON input file path
+        #[arg(long, conflicts_with = "input")]
+        input_file: Option<PathBuf>,
 
         /// Maximum solutions
         #[arg(short, long, default_value = "100")]
@@ -48,15 +58,28 @@ enum Commands {
         /// Solving strategy
         #[arg(short, long, default_value = "rayon")]
         strategy: String,
+
+        /// Write found solutions to file
+        #[arg(short, long)]
+        output_file: Option<PathBuf>,
     },
 
     /// Single-threaded mode (for benchmarking)
     Single {
-        #[arg(short, long)]
-        input: String,
+        /// JSON input string
+        #[arg(short, long, conflicts_with = "input_file")]
+        input: Option<String>,
+
+        /// JSON input file path
+        #[arg(long, conflicts_with = "input")]
+        input_file: Option<PathBuf>,
 
         #[arg(short, long, default_value = "100")]
         max_solutions: usize,
+
+        /// Write found solutions to file
+        #[arg(short, long)]
+        output_file: Option<PathBuf>,
     },
 
     /// Run as distributed coordinator
@@ -65,9 +88,13 @@ enum Commands {
         #[arg(short, long, default_value = "0.0.0.0:9876")]
         bind: String,
 
-        /// JSON puzzle input
-        #[arg(short, long)]
-        input: String,
+        /// JSON puzzle input string
+        #[arg(short, long, conflicts_with = "input_file")]
+        input: Option<String>,
+
+        /// JSON puzzle input file path
+        #[arg(long, conflicts_with = "input")]
+        input_file: Option<PathBuf>,
 
         /// Max solutions
         #[arg(short, long, default_value = "100")]
@@ -76,6 +103,10 @@ enum Commands {
         /// Prefix length for task splitting
         #[arg(short, long, default_value = "3")]
         prefix_len: usize,
+
+        /// Write found solutions to file
+        #[arg(short, long)]
+        output_file: Option<PathBuf>,
     },
 
     /// Run as distributed worker
@@ -91,8 +122,13 @@ enum Commands {
 
     /// Benchmark: compare strategies
     Benchmark {
-        #[arg(short, long)]
-        input: String,
+        /// JSON input string
+        #[arg(short, long, conflicts_with = "input_file")]
+        input: Option<String>,
+
+        /// JSON input file path
+        #[arg(long, conflicts_with = "input")]
+        input_file: Option<PathBuf>,
 
         #[arg(short, long, default_value = "50")]
         max_solutions: usize,
@@ -109,34 +145,39 @@ fn main() {
             max_solutions,
             threads,
             strategy,
+            output_file,
         } => {
             let puzzle = interactive_input().expect("Failed to read input");
             let constraints = build_constraints(&puzzle).expect("Failed to build constraints");
             println!("{}", constraints);
 
             let solutions = run_parallel(&constraints, max_solutions, threads, &strategy);
-            print_solutions(&solutions);
+            print_solutions(&solutions, output_file).expect("Failed to print/write solutions");
         }
 
         Commands::Json {
             input,
+            input_file,
             max_solutions,
             threads,
             strategy,
+            output_file,
         } => {
-            let puzzle = parse_json_input(&input).expect("Failed to parse JSON");
+            let puzzle = load_json_puzzle(input, input_file).expect("Failed to read/parse JSON");
             let constraints = build_constraints(&puzzle).expect("Failed to build constraints");
             println!("{}", constraints);
 
             let solutions = run_parallel(&constraints, max_solutions, threads, &strategy);
-            print_solutions(&solutions);
+            print_solutions(&solutions, output_file).expect("Failed to print/write solutions");
         }
 
         Commands::Single {
             input,
+            input_file,
             max_solutions,
+            output_file,
         } => {
-            let puzzle = parse_json_input(&input).expect("Failed to parse JSON");
+            let puzzle = load_json_puzzle(input, input_file).expect("Failed to read/parse JSON");
             let constraints = build_constraints(&puzzle).expect("Failed to build constraints");
             println!("{}", constraints);
 
@@ -147,16 +188,18 @@ fn main() {
 
             println!("Single-threaded: found {} solutions in {:.2}s",
                      solver.solutions.len(), elapsed.as_secs_f64());
-            print_solutions(&solver.solutions);
+            print_solutions(&solver.solutions, output_file).expect("Failed to print/write solutions");
         }
 
         Commands::Coordinator {
             bind,
             input,
+            input_file,
             max_solutions,
             prefix_len,
+            output_file,
         } => {
-            let puzzle = parse_json_input(&input).expect("Failed to parse JSON");
+            let puzzle = load_json_puzzle(input, input_file).expect("Failed to read/parse JSON");
             let constraints = build_constraints(&puzzle).expect("Failed to build constraints");
             println!("{}", constraints);
 
@@ -166,7 +209,7 @@ fn main() {
             let rt = tokio::runtime::Runtime::new().unwrap();
             let coordinator = Coordinator::new(bind, &constraints, prefixes, max_solutions);
             let solutions = rt.block_on(coordinator.run());
-            print_solutions(&solutions);
+            print_solutions(&solutions, output_file).expect("Failed to print/write solutions");
         }
 
         Commands::Worker {
@@ -181,9 +224,10 @@ fn main() {
 
         Commands::Benchmark {
             input,
+            input_file,
             max_solutions,
         } => {
-            let puzzle = parse_json_input(&input).expect("Failed to parse JSON");
+            let puzzle = load_json_puzzle(input, input_file).expect("Failed to read/parse JSON");
             let constraints = build_constraints(&puzzle).expect("Failed to build constraints");
             println!("{}", constraints);
 
@@ -245,6 +289,18 @@ fn main() {
     }
 }
 
+fn load_json_puzzle(input: Option<String>, input_file: Option<PathBuf>) -> Result<PuzzleInput, String> {
+    match (input, input_file) {
+        (Some(raw), None) => parse_json_input(&raw),
+        (None, Some(path)) => {
+            let content =
+                fs::read_to_string(&path).map_err(|e| format!("Failed to read {}: {}", path.display(), e))?;
+            parse_json_input(&content)
+        }
+        _ => Err("Specify exactly one of --input or --input-file".into()),
+    }
+}
+
 fn run_parallel(
     constraints: &Constraints,
     max_solutions: usize,
@@ -263,9 +319,22 @@ fn run_parallel(
     }
 }
 
-fn print_solutions(solutions: &[String]) {
+fn print_solutions(solutions: &[String], output_file: Option<PathBuf>) -> Result<(), String> {
     println!("\n=== Found {} solutions ===", solutions.len());
     for (i, sol) in solutions.iter().enumerate() {
         println!("  [{}] {}", i + 1, sol);
     }
+
+    if let Some(path) = output_file {
+        let mut out = String::new();
+        out.push_str(&format!("=== Found {} solutions ===\n", solutions.len()));
+        for (i, sol) in solutions.iter().enumerate() {
+            out.push_str(&format!("[{}] {}\n", i + 1, sol));
+        }
+        fs::write(&path, out)
+            .map_err(|e| format!("Failed to write {}: {}", path.display(), e))?;
+        println!("Solutions written to {}", path.display());
+    }
+
+    Ok(())
 }
